@@ -11,8 +11,10 @@
 set -euo pipefail
 PYTHON=${PYTHON:-$(command -v python || command -v python3)}
 if [ -z "$PYTHON" ]; then echo "no python on PATH; set PYTHON=<path>" >&2; exit 1; fi
-archive=${1:?usage: verify.sh <archive.zip> <dataset-root>}
-root=${2:?usage: verify.sh <archive.zip> <dataset-root>}
+# Resolved before the cd below, or a path relative to the caller's directory -
+# which is what the README's own example uses - stops resolving.
+archive=$(realpath "${1:?usage: verify.sh <archive.zip> <dataset-root>}")
+root=$(realpath "${2:?usage: verify.sh <archive.zip> <dataset-root>}")
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$here"
 

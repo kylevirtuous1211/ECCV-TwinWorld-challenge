@@ -14,27 +14,32 @@ either images or point clouds.
 
 ## 1. Renders: mean of three seeds
 
-Each rendering model writes its own `rgb/` when it is trained. If you are
-starting from the checkpoints rather than retraining, re-render with the same
-entry point and then average:
-
-    for seed in 0 1 2; do
-      for scene in <all thirteen>; do
-        python code/scripts/train_scene.py --dataset-root $ROOT \
-            --dataset <dataset> --scene <scene> \
-            --model 2dgs --iterations 7000 \
-            --normal-weight 0.05 --distortion-weight 0.0 --seed $seed \
-            --checkpoint $NATIVE/renders/seed$seed/<dataset>_<scene>/checkpoint.pt \
-            --output $WORK/render/seed$seed/<dataset>_<scene>
-      done
-    done
+**The rendering checkpoints do not exist** - those 39 runs were launched without
+`--save-checkpoint`, which is stated in `MANIFEST.md` and in the factsheet. What
+`native/renders/seed{0,1,2}/` carries is every rendered image from all three
+seeds, plus each run's `receipt.json` and `train.log`. So this step does not load
+a model; it averages the images that are there, and that reproduces all 39
+archive PNGs byte for byte:
 
     python code/scripts/average_renders.py \
-        --renders $WORK/render/seed0 $WORK/render/seed1 $WORK/render/seed2 \
+        --renders $NATIVE/renders/seed0 $NATIVE/renders/seed1 $NATIVE/renders/seed2 \
         --output $WORK/render_mean3
 
-`average_renders.py` writes a receipt recording the per-frame spread across
-seeds, and refuses to average a frame that is missing from any input.
+`average_renders.py` writes a receipt recording the per-frame spread across seeds
+and refuses to average a frame missing from any input.
+
+To retrain the rendering models instead - which produces *different* Gaussians,
+see the last section - the command is below. Note `--init-cloud`: all 39 shipped
+runs were initialised from the dense MVS seed, so omitting it trains a different
+model rather than a different seed of the same one.
+
+    python code/scripts/train_scene.py --dataset-root $ROOT \
+        --dataset <dataset> --scene <scene> \
+        --model 2dgs --iterations 7000 \
+        --normal-weight 0.05 --distortion-weight 0.0 --seed <0|1|2> \
+        --init-cloud $WORK/mvs/<dataset>_<scene>/points3D.ply \
+        --save-checkpoint \
+        --output $WORK/render/seed<seed>/<dataset>_<scene>
 
 ## 2. TUM clouds: fuse, vote, thin
 
@@ -65,9 +70,28 @@ intersection instead is worth 0.083 of `geometry_score` here. It is a known
 upstream defect (gsplat #477, #863, PR #932); `code/twinworld/raydepth.py`
 recovers the intersection from what an unmodified install already returns.
 
-`tum/scene_006` repeats the same two commands over
-`$NATIVE/tum_scene_006_minviews2/seed{0..4}` with `--min-views 2` added, and its
-result substitutes for `scene_006` in step 6.
+### `tum/scene_006` is the one exception, and it takes three commands
+
+Its five models are in `$NATIVE/tum_scene_006_minviews2/seed{0..4}`. **Seed 0 has
+no `checkpoint.pt`** - that run was launched without `--save-checkpoint` for the
+same reason the rendering runs were - so its exported cloud ships instead, at
+`$NATIVE/tum_scene_006_minviews2/seed0/tum_scene_006_isect/point_cloud.ply`.
+Seeds 1 to 4 have checkpoints and can be re-exported with `--min-views 2` added
+to the step-2 command. Then:
+
+    python code/scripts/veto_clouds.py --clouds <seed0 cloud's directory> \
+        --other <seed1..4 directories> \
+        --min-agree 2 --keep-radius 0.05 \
+        --pattern 'tum_*_isect' --output $WORK/geom_mv2_ens4
+
+    python code/scripts/downsample_clouds.py --clouds $WORK/geom_mv2_ens4 \
+        --pattern 'tum_*_isect' --voxel 0.021 --output $WORK/geom_mv2_ens4_v0.021
+
+**The 0.021 voxel is not the 0.03 of the previous step** and it is load-bearing:
+the veto output is 8,385,243 points and the archive carries 7,440,091. Skipping
+it puts 945,152 extra points into a scored scene, and `verify.sh` then reports a
+total of 72,604,987 rather than the 71,659,835 below. The result substitutes for
+`scene_006` in step 6.
 
 ## 3. Gold Coast clouds: label, shift
 
@@ -159,7 +183,7 @@ with a proposed change to the metric that would remove the incentive.
 ## 6. Replace the three clouds, and check
 
     python code/scripts/reshift_submission.py --submission $WORK/base.zip \
-        --replace tum/scene_006        $WORK/geom_mv2_ens4/tum_scene_006_isect/point_cloud.ply \
+        --replace tum/scene_006        $WORK/geom_mv2_ens4_v0.021/tum_scene_006_isect/point_cloud.ply \
         --replace gold_coast/scene_011 $WORK/volume/scene_011_volume.ply \
         --replace gold_coast/scene_012 $WORK/volume/scene_012_volume.ply \
         --output $WORK/submission_v0.30_bcc019.zip

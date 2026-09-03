@@ -34,7 +34,15 @@ absent from the reconstruction.
 
 | entries | native representation | where | size |
 |---|---|---|---|
-| `gold_coast/scene_009..012` | 2DGS geometry models, **4 scenes**, each with `colour.npy` beside it; then a random-forest label per point; then a frame shift; then, for 011 and 012 only, the labelled occupancy volume | `native/gold_coast_geometry/gc_<scene>_isect/` and `native/semantic/` | ~4 GB |
+| `gold_coast/scene_009..012` | 2DGS geometry models, **4 scenes**, each with `colour.npy` beside it; then a random-forest label per point; then a frame shift; then, for 011 and 012 only, the labelled occupancy volume | `native/gold_coast_geometry/gc_<scene>_isect/` and `native/semantic/` | ~10 GB |
+
+**`native/semantic/` is post-shift, not pre-shift**, and it is the state after
+`shift_clouds.py`. `scene_009` and `scene_010` carry their own measured offsets;
+`scene_011` and `scene_012` carry **(0.45, -1.05)**, the route that extrapolates
+from `scene_009` alone. If you start from these clouds rather than re-running the
+labelling, `build_gc_clouds.py --from-offset` must say `0.45 -1.05`, not the
+`0.6625 -1.07` that a plain `--unmeasured extrapolate` run would leave. Both
+routes end at the same absolute position; only the stated starting point differs.
 
 ## Known gaps, stated rather than left to be discovered
 

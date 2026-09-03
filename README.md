@@ -1,9 +1,12 @@
 # TwinWorld Challenge @ ECCV 2026 - submitted pipeline
 
-Team `kylechen1211`. Final phase, **1.53**, third place.
+Team `kylechen1211`. Final phase, **1.53**, fourth of twenty-one.
 
     PSNR 19.95   SSIM 0.72   LPIPS 0.29   F-score 0.58   mIoU 0.34
     rendering 0.610   geometry 0.58   semantic 0.34
+
+Read from `api/phases/29458/get_leaderboard/` after the phase closed. The board
+prints two decimals, so nothing here is quoted to more.
 
 The archive is `submission_v0.30_bcc019.zip`, submitted 2026-08-31T09:56Z.
 
@@ -75,6 +78,28 @@ reconstruction, and it works because that term is unregularised. The format is
 unchanged - a binary PLY with a `classification` byte - no external data is
 involved and nothing touches the evaluation mechanism, but it should be read as
 a finding about the benchmark as much as about the method.
+
+## What does not reproduce, and why
+
+Two steps upstream of everything else are not deterministic, and both matter to a
+verification.
+
+**2DGS training does not reproduce even at a fixed seed on fixed hardware.**
+Measured rather than assumed: two runs with byte-identical command lines, the
+same `--seed 0`, the same machine and the same GPU end 31,224 Gaussians apart -
+1,218,151 against 1,249,375 - with none of the three rendered frames
+byte-identical and a PSNR *between the two runs* of 15.7 to 23.8 dB. Training
+seeds only `torch.manual_seed`, while gsplat's backward accumulates with
+`atomicAdd`, whose floating-point summation order is not fixed; the densification
+schedule then amplifies the difference. Averaging three rendering seeds is partly
+a response to this.
+
+**COLMAP's dense MVS is not deterministic across machines**, and it is what
+steps 2 to 5 are initialised from.
+
+Everything downstream of the checkpoints *is* deterministic. That is why
+`NATIVE_TO_SUBMISSION.md` starts there, and why following it reproduces the two
+submitted Gold Coast clouds byte for byte.
 
 ## What is here
 
@@ -161,14 +186,29 @@ fusion gate can put it back. This one scene is therefore exported from the
 released seed at a relaxed multi-view gate, then run through the same agreement
 filter:
 
-    python scripts/export_geometry.py --dataset-root $ROOT \
-        --dataset tum --scene scene_006 \
-        --normal-weight 0.05 --distortion-weight 0.01 \
-        --depth-readout intersection --min-views 2 --seed <0..4> \
-        --output $WORK/geom_mv2/seed<seed>/tum_scene_006_isect
-    # then veto_clouds.py exactly as in step 3, over $WORK/geom_mv2
+    for seed in 0 1 2 3 4; do
+      python scripts/export_geometry.py --dataset-root $ROOT \
+          --dataset tum --scene scene_006 \
+          --normal-weight 0.05 --distortion-weight 0.01 \
+          --depth-readout intersection --min-views 2 --seed $seed \
+          --output $WORK/geom_mv2/seed$seed/tum_scene_006_isect
+    done
 
-Substitute the result for `tum/scene_006` in step 8.
+    python scripts/veto_clouds.py --clouds $WORK/geom_mv2/seed0 \
+        --other $WORK/geom_mv2/seed1 $WORK/geom_mv2/seed2 \
+                $WORK/geom_mv2/seed3 $WORK/geom_mv2/seed4 \
+        --min-agree 2 --keep-radius 0.05 \
+        --pattern 'tum_*_isect' --output $WORK/geom_mv2_ens4
+
+    python scripts/downsample_clouds.py --clouds $WORK/geom_mv2_ens4 \
+        --pattern 'tum_*_isect' --voxel 0.021 --output $WORK/geom_mv2_ens4_v0.021
+
+**Three commands, not two.** The voxel here is 0.021 and not the 0.03 of step 4,
+because this scene is capped to the point count `v0.21` shipped: the veto output
+is 8,385,243 points and the archive carries 7,440,091. Omitting this step puts
+945,152 extra points into a scored scene and the archive no longer matches.
+
+Substitute the result for `tum/scene_006` in step 8b.
 `scripts/diagnose_geometry.py` in the full repository is what found this, by
 measuring our cloud against the released sparse points on a scene with no truth.
 
@@ -240,14 +280,28 @@ same place by a longer route: it was shifted with an offsets file holding
 `scene_009` alone, putting them at (0.45, -1.05) before the same re-centring.
 Either is fine; the two differ only in what `--from-offset` must say.
 
-### 7. The labelled volume for `scene_011` and `scene_012`
+### 7. Pack, which is also where the Gold Coast clouds get capped
 
-The two scenes the final phase scores semantically ship no ground truth, so their
-offset cannot be measured against their own truth. `--from-offset` is where step 6
-left them; `--offset` is where they ship. See "The two constants" below.
+    python scripts/make_submission.py --dataset-root $ROOT \
+        --renders $WORK/render_mean3 \
+        --clouds $WORK/geom_mvs_ens4_v0.03 --tum-variant isect \
+        --semantic $WORK/semantic_shifted \
+        --thin-unscored 0.2 --cap-cloud 13000000 \
+        --output $WORK/base.zip
+
+`--cap-cloud 13000000` walks a voxel upward until any cloud over the limit is
+under it. **`scene_011` is 14,326,140 points as step 6 leaves it and 12,752,458
+after the cap**, so the surface the volume is built on only exists inside this
+archive. `--thin-unscored 0.2` thins the six scenes the final phase does not read.
+
+### 8. The labelled volume, for `scene_011` and `scene_012` only
+
+Built on the **capped** surfaces, which is why it reads out of the archive from
+step 7 rather than out of `$WORK/semantic_shifted`. Taking the uncapped cloud
+produces a different result and does not reproduce the submission.
 
     python scripts/build_gc_clouds.py \
-        --clouds $WORK/semantic_shifted \
+        --from-archive $WORK/base.zip \
         --scenes scene_011 scene_012 \
         --from-offset 0.6625 -1.07 --offset 0.6925 -0.830 \
         --lattice bcc --spacing 0.19 --shell 0.17 \
@@ -256,26 +310,23 @@ left them; `--offset` is where they ship. See "The two constants" below.
     scene_011   12,752,458 surface points -> 12,543,412
     scene_012   10,097,143 surface points ->  9,983,255
 
-### 8. Pack
+This replaces the labelled surface with a labelled occupancy volume on a
+body-centred cubic lattice. **It optimises the semantic metric as written rather
+than improving the reconstruction**, and it is disclosed and explained in
+`DISCLOSURE.md` together with a proposed change to the metric that removes the
+incentive.
 
-    python scripts/make_submission.py --dataset-root $ROOT \
-        --renders $WORK/render_mean3 \
-        --clouds $WORK/geom_mvs_ens4_v0.03 --tum-variant isect \
-        --semantic $WORK/semantic_shifted \
-        --thin-unscored 0.2 --cap-cloud 13000000 \
-        --output $WORK/submission.zip
+### 8b. Replace the three clouds
 
-    python scripts/reshift_submission.py --submission $WORK/submission.zip \
-        --replace tum/scene_006        $WORK/geom_mv2_ens4/tum_scene_006_isect/point_cloud.ply \
+    python scripts/reshift_submission.py --submission $WORK/base.zip \
+        --replace tum/scene_006        $WORK/geom_mv2_ens4_v0.021/tum_scene_006_isect/point_cloud.ply \
         --replace gold_coast/scene_011 $WORK/volume/scene_011_volume.ply \
         --replace gold_coast/scene_012 $WORK/volume/scene_012_volume.ply \
         --output $WORK/submission_v0.30_bcc019.zip
 
-`make_submission.py` resolves all fifty-two slots before writing anything and
-refuses an ambiguous match rather than ranking candidates alphabetically.
-`reshift_submission.py` rewrites only the named clouds and then hashes the
-*decompressed* content of all fifty-two entries in both archives, so "nothing
-else changed" is checked rather than asserted.
+`reshift_submission.py` rewrites only the named clouds, then hashes the
+decompressed content of all fifty-two entries in both archives, so "nothing else
+changed" is checked rather than asserted.
 
 ### 9. Check
 
