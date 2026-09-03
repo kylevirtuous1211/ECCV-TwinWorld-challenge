@@ -1,0 +1,406 @@
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+\usepackage{cvpr}              % camera-ready
+
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage[shortlabels]{enumitem}
+\usepackage[pagebackref,breaklinks,colorlinks]{hyperref}
+\usepackage[capitalize]{cleveref}
+\crefname{section}{Sec.}{Secs.}
+\Crefname{section}{Section}{Sections}
+\Crefname{table}{Table}{Tables}
+\crefname{table}{Tab.}{Tabs.}
+\crefname{figure}{Fig.}{Figs.}
+
+\def\cvprPaperID{*****}
+\def\confName{CVPR}
+\def\confYear{2026}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+\begin{document}
+
+\title{TwinWorld 2026 Challenge Final Verification Factsheet\\
+       Sparse-view 2D Gaussian Splatting with a corrected depth readout,\\
+       and what the semantic metric actually rewards}
+
+\author{An Kai Chen\\
+National Tsing Hua University\\
+{\tt\small kylechen.ankai@gmail.com}
+}
+\maketitle
+
+%---------------------------------------------------------------------------
+\section{Team details}
+
+\begin{itemize}\itemsep2pt
+\item \textbf{Team name:} \code{kylechen1211}
+\item \textbf{Team leader:} An Kai Chen, National Tsing Hua University,
+      \href{mailto:kylechen.ankai@gmail.com}{\tt kylechen.ankai@gmail.com}
+\item \textbf{Rest of the team:} none. This is a one-person entry.
+\item \textbf{Team website:} none.
+\item \textbf{Codabench user name:} \code{kylechen1211}. We kept the team name
+      identical to the user name so the entry is unambiguous to match.
+\item \textbf{Codabench ID of the final submission:} \textbf{909861}, final
+      phase, submitted 2026-08-31 09:56~UTC, archive
+      \code{submission\_v0.30\_bcc019.zip}.
+\item \textbf{Final challenge score:} \textbf{1.534}. PSNR 19.95, SSIM 0.723,
+      LPIPS 0.290, F-score 0.582, mIoU 3D 0.341; equivalently
+      \code{rendering\_score} 0.610, \code{geometry\_score} 0.582,
+      \code{semantic\_score} 0.341.
+\item \textbf{Source code, checkpoints and factsheet:}
+      \url{https://github.com/kylevirtuous1211/ECCV-TwinWorld-challenge}
+\item \textbf{Complete results in the native representation:} see the Google
+      Drive link in the accompanying email (kept separate from the code link, as
+      requested).
+\end{itemize}
+
+The geometry term is the mean of three thresholds and that mean is dominated by
+the loosest, so we report the components rather than only their average. On the
+six scenes that ship ground truth ours are \textbf{F@5\,cm 0.357, F@10\,cm
+0.521, F@20\,cm 0.637}.
+
+%---------------------------------------------------------------------------
+\section{Method details}
+
+\subsection{Overall pipeline}
+
+\Cref{fig:pipeline} is the whole method. It is 2D Gaussian
+Splatting~\cite{huang2024_2dgs} on gsplat~\cite{gsplat} with no new network, no
+data from outside the release, and no pretrained weights anywhere in the path
+that produces a submission. Three changes account for most of the score, and each
+was measured on the six scenes that ship ground truth before it was adopted.
+
+\paragraph{1. A dense MVS seed.}
+The released \code{train/sparse/0} reconstruction covers only 0.07--0.20\% of
+pixels and is a crop of a larger model: every reprojection error in it is exactly
+zero and its image identifiers run in the 700s--800s inside a model of at least
+819 images. Re-triangulating densely from the released images with the released
+poses held fixed, then running COLMAP~\cite{schoenberger2016colmap} dense MVS,
+replaces it. Worth $+0.10$ of F-score on the withheld scenes.
+
+\paragraph{2. Reading depth at the ray--disc intersection.}
+2DGS represents a surface as oriented discs, so the depth a pixel should receive
+is the distance to where its ray crosses the disc it hit. gsplat's native 2DGS
+path reports the \emph{centre} depth of that disc for every pixel the splat
+covers, because depth is passed through the rasteriser as an extra colour channel
+indexed by Gaussian identifier. A disc tilted 60\textdegree{} spans 1.73 of its
+own radius in depth and is reported as a constant.
+
+\textbf{This is a known upstream defect and we do not claim it as a finding.} It
+has been open since 2024-11-05 as gsplat issues \#477 and \#863, with PR \#932
+(``use ray-plane intersection depth instead of Gaussian center depth'')
+unmerged; the original 2DGS work and its reference rasteriser
+\code{diff-surfel-rasterization} compute the intersection correctly. What we
+contribute is its price on this benchmark. In a paired A/B on identical
+checkpoints over the four TUM scenes that ship ground truth, reading it correctly
+moves \code{geometry\_score} from \textbf{0.3888 to 0.4717}, with precision and
+recall at 5\,cm both rising and the clouds getting 7--11\% \emph{smaller}. Our
+\code{twinworld/raydepth.py} recovers the intersection from what an unmodified
+install already returns, so it needs no CUDA patch.
+
+A consequence worth stating for the benchmark's sake: any geometry baseline built
+on gsplat's native 2DGS path rather than on \code{diff-surfel-rasterization} is
+measuring a different quantity from the one~\cite{huang2024_2dgs} defines,
+including through gsplat's own normal-consistency loss.
+
+\paragraph{3. Averaging three rendering seeds.}
+Worth $+0.026$ of \code{rendering\_score}. It requires no ground truth, so it
+applies to the seven withheld scenes exactly as it applies to the six released
+ones. Selecting the best seed does not: the best seed can only be identified
+where truth exists, and truth exists on none of the scenes the final phase
+scores.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{fig/pipeline.pdf}
+\caption{The pipeline. One dense seed feeds three separately trained families of
+Gaussians: geometry (five seeds, voted), Gold Coast geometry (which also carries
+the colour the label classifier consumes), and rendering (three seeds,
+averaged). Gains in blue are measured on the six scenes that ship ground truth.}
+\label{fig:pipeline}
+\end{figure*}
+
+\subsection{Extra data}
+
+\textbf{No.} Everything comes from the released \code{TwinWorld\_Datasets}
+(HuggingFace snapshot \code{8d5dfff}) and from our own submissions' returned
+scores. No external ground truth, no data outside the release, and no pretrained
+reconstruction of these scenes. The only pretrained weights involved anywhere are
+the VGG network inside the \code{lpips} package, used for \emph{local} scoring of
+the LPIPS term and never in the path that produces a submission.
+
+Two properties of how we use the \emph{released} ground truth are disclosed in
+full in \code{DISCLOSURE.md} in the code bundle, and summarised in
+\cref{sec:disclosure} below.
+
+\subsection{Training strategy}
+
+Two different models are trained per scene because the two terms want different
+things.
+
+\textbf{Geometry} (9 TUM scenes $\times$ 5 seeds, and 4 Gold Coast scenes): 2DGS,
+7000 iterations for TUM and 15{,}000 for Gold Coast, normal weight 0.05,
+distortion weight 0.01, intersection depth readout, initialised from the dense
+MVS seed. Seed 0 is fused into a point cloud; seeds 1--4 exist only to vote on
+it. The vote keeps a point when at least two of the other four placed a point
+within 5\,cm, which is worth $+0.032$ of \code{geometry\_score} and removes about
+half the points, so the archive can ship at the full 2\,cm fusion voxel rather
+than thinning to fit the scorer's point budget.
+
+\textbf{Rendering} (13 scenes $\times$ 3 seeds): 2DGS, 7000 iterations, normal
+weight 0.05, \emph{distortion weight 0}, same seed. The three renders are
+averaged per pixel.
+
+\textbf{Semantics}: a random forest~\cite{scikit-learn} (200 trees, depth 32,
+minimum leaf 2) over geometric features and the rendered colour, fitted on the
+reconstructed clouds rather than on ground truth. Fitting on the reconstruction
+and adding colour are together worth 0.15 of \code{semantic\_score} in the
+corrected frame.
+
+\textbf{Frame correction}: the released Gold Coast ground truth sits 1.1--1.4\,m
+out of the camera frame its own images define. This is a property of the released
+data and not of our reconstruction --- fitting the \emph{provided}
+\code{points3D.ply} to the \emph{provided} \code{3d\_gt} recovers the same
+0.25\textdegree{} rotation with nothing of ours in the loop. We measure it on the
+two Gold Coast scenes that ship ground truth, with the nine TUM scenes as the
+control that reads approximately zero.
+
+\subsection{Complexity and cost}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+model family & Gaussians & time \\
+\midrule
+TUM geometry, per seed & 19.1\,M & \\
+Gold Coast geometry & 28.7\,M & \\
+Rendering, per seed & 25.5\,M & 43\,min \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Per scene the models run 1.4--2.5\,M Gaussians for TUM geometry and 7.0--7.5\,M
+for Gold Coast. A rendering model trains in 2.5--5.5 minutes. A full thirteen-scene
+rebuild is about six hours on one RTX~6000 Ada or about two hours as a Slurm
+array on H200 nodes; a single geometry job was sampled at 7\,GB of 48\,GB. No
+network is trained beyond the Gaussians themselves, so there is no parameter
+count in the usual sense; the submitted archive holds 71.7\,M points across 13
+clouds and 39 images.
+
+\subsection{Inference and submission}
+
+Nothing at submission time retrains. Geometry models are rendered to depth,
+fused, voted and thinned; Gold Coast models are labelled, shifted, and for
+\code{scene\_011} and \code{scene\_012} converted into the volume described in
+\cref{sec:disclosure}; rendering models are rendered and averaged.
+\code{NATIVE\_TO\_SUBMISSION.md} in the results bundle gives every command.
+Running it reproduces the two submitted Gold Coast clouds \emph{byte for byte},
+and all 39 renders in the bundle are byte-identical to those in the archive.
+
+\subsection{Experimental results}
+
+Our row is Final 1.534 (4th of 21). Within the challenge our F-score of 0.582 is
+close to the median (0.573) and our mIoU of 0.341 is 4th against a median of
+0.216, so the leaderboard separated entries on semantics rather than on geometry.
+
+The internal ablations behind the three headline changes, each measured on the
+scenes that ship ground truth:
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}lr@{}}
+\toprule
+change & effect \\
+\midrule
+centre $\rightarrow$ intersection depth & $+0.083$ F \\
+sparse $\rightarrow$ dense MVS seed & $+0.10$ F (board) \\
+one seed $\rightarrow$ 5-seed vote & $+0.032$ F \\
+best seed $\rightarrow$ mean of three & $+0.026$ rend. \\
+surface $\rightarrow$ labelled volume & $+0.06$ mIoU (board) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Novelty, and what is not ours}
+\label{sec:novelty}
+
+The depth readout is a known upstream defect, cited above; our contribution is
+the measurement, not the mechanism. The lattice result in \cref{sec:disclosure}
+is Bambah~\cite{bambah1954} via Conway and Sloane~\cite{conway1999sphere}, and
+Alam and Haas~\cite{alam2006coverage} had already applied optimal covering
+lattices to sensor coverage and derived the same $1.859$ constant. That a
+one-sided metric can be gamed by thickening a surface is
+SparseOcc~\cite{liu2024sparseocc}, which used the word ``hacked'' and measured
+$+5$--$15$ mIoU in occupancy prediction. Nothing in this submission has been
+previously published.
+
+%---------------------------------------------------------------------------
+\section{Ensemble and fusion strategies}
+
+Two ensembles are used and both are in the final submission.
+
+\textbf{Five-seed agreement filter (geometry).} Five geometry models per TUM
+scene, differing only in seed. The cloud fused from seed 0 is filtered to the
+points that at least two of the other four seeds also placed within 5\,cm. This
+is a precision filter rather than a fusion: it adds no points. It is worth
+$+0.032$ of \code{geometry\_score} and removes roughly half the points, and the
+second effect matters as much as the first, because the scorer rejects archives
+whose largest cloud is too big, so density and accuracy were otherwise in direct
+conflict.
+
+\textbf{Three-seed render averaging.} The per-pixel mean of three rendering
+models. Worth $+0.026$ of \code{rendering\_score}, and it beats the \emph{best}
+of the three on five of the six scenes we can measure --- so it is not only
+variance reduction; the seeds disagree mostly where each is separately wrong. The
+median across seeds is consistently worse than the mean (0.5979 against 0.6026),
+which is what a Gaussian-ish disagreement predicts.
+
+We measured a third ensemble and rejected it: a floater prune gated on distance
+to the nearest training camera won on three scenes but lost over 18 paired A/Bs
+across six scenes and three seeds, mean $-0.0012$. It is not in the submission.
+
+%---------------------------------------------------------------------------
+\section{Disclosed properties of the submission}
+\label{sec:disclosure}
+
+Stated here rather than left for the verification to find. All three are
+described at length in \code{DISCLOSURE.md} in the code bundle.
+
+\textbf{1. Released development-set ground truth is used to place the test
+clouds.} \code{scene\_009} and \code{scene\_010} ship ground truth so their frame
+offset is measured directly. \code{scene\_011} and \code{scene\_012} do not, and
+they are two of the seven scenes the final phase scores, so their offset is
+inferred --- partly by carrying the offset measured on the other two, and partly
+by carrying \code{scene\_010}'s ground-truth cloud into \code{scene\_011}'s camera
+frame through a joint COLMAP reconstruction of the three registrable Gold Coast
+scenes, which overlap in a band. We read the terms' ``external ground-truth
+data'' as data from outside the release, which this is not; we flag it because it
+is development-set ground truth influencing test-set predictions, and reverting
+it is a single parameter.
+
+\textbf{2. One of the three offset estimates uses our own returned scores.} It
+models pooled mIoU as $a\,g(o-t)$, with $g$ a response curve measured on the two
+scenes that ship truth, and fits $t$ to five of our own scored submissions.
+
+\textbf{3. For \code{scene\_011} and \code{scene\_012} the submitted cloud is a
+labelled occupancy volume rather than a labelled surface.} This optimises the
+semantic metric as written rather than improving the reconstruction, and it is
+the largest single component of our semantic score. It is discussed in
+\cref{sec:metric}, because we think the underlying observation is useful to the
+organisers independently of our entry.
+
+%---------------------------------------------------------------------------
+\section{Other details}
+
+\subsection{Impressions, and difficulties encountered}
+
+The dataset is excellent and the three-term score is the right shape for a
+digital-twin task: it refuses to let a method win on appearance alone. The
+difficulty that dominated our effort was not the modelling. It was that the
+final phase scores seven scenes that ship no ground truth, so almost every choice
+had to be validated on six scenes and then transferred blind. Two of our worst
+mistakes came from that: we selected a Gold Coast representation on development
+clouds that had been thinned to 12\,cm when the scenes it shipped to carry 6\,cm,
+and a predicted factor of 2.26 arrived on the board as 1.29; and we shipped a
+scene whose reconstruction was missing a quarter of its extent for three
+submissions before a no-ground-truth diagnostic caught it.
+
+A second difficulty worth reporting: the scorer rejects an archive above some
+point count with a null exit code and no log. We spent three submissions
+bracketing it. Publishing the limit, or returning any message at all on that
+path, would give every team those submissions back.
+
+\subsection{Comments on the evaluation metric}
+\label{sec:metric}
+
+We think one property of the score is worth the organisers' attention, and we
+report it as a measurement rather than an opinion.
+
+The Gold Coast semantic term is a truth-driven nearest-neighbour lookup inside
+10\,cm with \emph{no precision component}: a predicted point that no ground-truth
+point is near costs exactly nothing. On the two scenes that ship truth, deleting
+\textbf{every} false positive from our submission moves pooled mIoU from 0.3104
+to 0.3207, while matching every ground-truth point with the labels we already
+assign would move it to 0.94 --- a ratio of about \textbf{60:1} between coverage
+and precision.
+
+Under that scoring the optimal submission is not a surface. It is a labelled
+occupancy volume, and the question becomes a covering problem: place $N$ points
+so that as much ground truth as possible lies within 10\,cm of one. We ship on
+the body-centred cubic lattice, the thinnest \emph{lattice} covering of
+three-dimensional space~\cite{bambah1954,conway1999sphere}, which guarantees a
+10\,cm match for 349 points per cubic metre where the obvious cubic grid needs
+649.
+
+The part that surprised us is that thickness is worth nothing. We assumed a
+coarser lattice buying a thicker shell would win and measured it losing,
+monotonically in the covering radius: a 0.75\,m shell scores 0.172 against a
+0.22\,m shell's 0.512 at the same point count. Covered volume is nearly constant
+across those variants, 36{,}000 to 51{,}000\,m$^3$, while the score moves
+threefold --- so volume is not the currency and position is. An oracle allowed to
+see the ground truth reaches the same score as our lattice with \textbf{17 times
+fewer points}, which says the point budget was never the binding constraint:
+about 30\% of the truth is simply not near anything we reconstructed.
+
+\textbf{Why this benchmark and not others.} The same truth-driven
+nearest-neighbour label transfer is KITTI-360's semantic mapping
+metric~\cite{liao2022kitti360}, and it is not exploitable there, because
+KITTI-360 reports geometric accuracy on the same points in the same table, so
+dilating the cloud destroys that column. ScanNet-family benchmarks cannot have
+the problem at all, because predictions are scored on a \emph{provided} point
+set, so every prediction lands on a ground-truth point and false positives are
+counted automatically. Here \code{geometry\_score} is computed on the TUM scenes
+and \code{semantic\_score} on the Gold Coast scenes, and because those two sets
+are \emph{disjoint}, nothing anywhere in the total penalises submitting volume
+where a surface belongs. We believe the decoupling, rather than the mIoU
+definition, is the thing worth changing.
+
+\subsection{Suggestions for future editions}
+
+\begin{enumerate}[1.]\itemsep2pt
+\item \textbf{Give the semantic term a precision component, evaluated on the same
+      scenes} --- as~\cite{knapitsch2017tanks} does for surfaces and
+      as~\cite{liao2022kitti360} does for this exact protocol. That removes the
+      incentive described above entirely and costs one column.
+\item \textbf{Publish the point-count limit and return a message when an archive
+      exceeds it.} A null exit code with no log costs every team submissions to
+      diagnose.
+\item \textbf{Consider whether 5\,cm is measurable.} TUM2TWIN's own
+      documentation~\cite{wysocki2026tum2twin} gives the UAS laser scan 0.08\,m
+      absolute and 0.05\,m relative accuracy, and the best conventional aerial
+      photogrammetry reports mean cloud-to-cloud errors around 8.5\,cm with
+      hundreds of images. F@5\,cm on 12--24 views may be partly a measurement of
+      the reference.
+\item \textbf{Release ground truth for one withheld scene after the challenge
+      closes.} Every team is currently transferring choices blind from six scenes
+      to seven, and the transfer is where our largest errors happened.
+\item \textbf{State whether development-set ground truth may inform test-set
+      predictions.} The Gold Coast georeferencing offset makes this decisive
+      rather than academic, and the terms as written do not settle it.
+\end{enumerate}
+
+\subsection{A gap in what we can provide}
+
+The 39 rendering runs were launched without checkpoint saving, so the Gaussians
+behind the submitted images no longer exist. We checked whether retraining would
+recover them and it does not: two runs with byte-identical commands, the same
+seed and the same GPU end 31{,}224 Gaussians apart, with none of the three
+rendered frames byte-identical and a PSNR \emph{between the two runs} of
+15.7--23.8\,dB. Training seeds only \code{torch.manual\_seed} while gsplat's
+backward accumulates with \code{atomicAdd}, whose summation order is not fixed.
+The results bundle therefore ships every rendered image from all three seeds, the
+39 averaged ones that are byte-identical to the archive, and each run's full
+configuration and metrics --- but not retrained weights presented as the
+originals. Every point cloud in the submission does have its Gaussians.
+
+{\small
+\bibliographystyle{ieeenat_fullname}
+\bibliography{egbib}
+}
+
+\end{document}
