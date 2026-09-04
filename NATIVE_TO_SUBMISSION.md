@@ -66,7 +66,9 @@ model rather than a different seed of the same one.
 `--depth-readout intersection` is load-bearing and is the subject of
 `code/README.md` finding 1: gsplat's native 2DGS path reports each Gaussian's
 centre depth for every pixel its splat covers, and reading the ray-disc
-intersection instead is worth 0.083 of `geometry_score` here. It is a known
+intersection instead is worth 0.083 of `geometry_score` on the model family
+that number was measured on; see `code/README.md` for the smaller gain measured
+on a checkpoint that shipped. It is a known
 upstream defect (gsplat #477, #863, PR #932); `code/twinworld/raydepth.py`
 recovers the intersection from what an unmodified install already returns.
 
@@ -124,13 +126,14 @@ out of the camera frame its own images define. That is a property of the
 released data rather than of our reconstruction: fitting the **provided**
 `train/sparse/0/points3D.ply` to the **provided** `3d_gt` recovers the same
 0.25 degree rotation, with nothing of ours in the loop. `frame_offset.py`
-measures it on the two Gold Coast scenes that ship ground truth, with the nine
-TUM scenes as the control that reads approximately zero.
+measures it on the two Gold Coast scenes that ship ground truth, with the four
+TUM scenes that ship ground truth as the control, whose corresponding offsets
+range from 0.014 to 0.074 m.
 
 `scene_011` and `scene_012` ship no ground truth, so `--unmeasured extrapolate`
 gives them the mean of the two measured offsets. Step 4 then re-centres them.
-**This is disclosed in full, with its justification and its alternatives, in
-`DISCLOSURE.md`.**
+`DISCLOSURE.md` describes this step, its derivation and the alternatives
+considered.
 
 ## 4. Pack, which is also where the Gold Coast clouds get capped
 

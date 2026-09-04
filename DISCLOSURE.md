@@ -1,8 +1,8 @@
 # Disclosure
 
-Written for the code verification the challenge terms provide for, so that
-anything a reviewer would find in this code is stated here first rather than
-discovered.
+Written for the code verification the challenge terms provide for. It states the
+properties of this submission that a reviewer would otherwise derive from the
+code.
 
 ## Data
 
@@ -18,7 +18,7 @@ reconstruction of these scenes.** The only pretrained weights anywhere are the
 VGG network inside the `lpips` package, used for local scoring of the LPIPS term
 and never for producing a submission.
 
-## Three things a reviewer will see, stated up front
+## Three disclosed properties of the submission
 
 ### 1. Released ground truth from the development scenes is used to place the test scenes' clouds
 
@@ -37,7 +37,9 @@ of the three routes we used read released ground truth of *other* scenes:
 - carrying `scene_010`'s ground-truth **cloud** into `scene_011`'s camera frame
   through a joint COLMAP reconstruction of the three registrable Gold Coast
   scenes, and reading off the displacement that lands it on ours. The two flights
-  overlap in a band, so this is a real measurement rather than an extrapolation.
+  overlap in a band, so this route measures a displacement rather than
+  extrapolating one; the offset finally applied to `scene_011` and `scene_012`
+  is still inferred, because neither scene ships ground truth.
 
 We read the terms' "external ground-truth data" as ground truth from outside the
 release, which this is not. **But it is development-set ground truth influencing
@@ -64,15 +66,16 @@ the previously shipped offset was from the truth.
 `twinworld/lattice.py` submits a labelled occupancy volume rather than a labelled
 surface for the two Gold Coast test scenes. It works because the semantic term
 has **no precision component** — a predicted point that no ground-truth point is
-near costs exactly nothing — so filling the neighbourhood of our surface with a
-lattice fine enough to guarantee a 10 cm match strictly increases the score.
+near costs exactly nothing - so under this scoring rule a labelled occupancy
+volume can be preferable to a labelled surface.
 
 The submission format is unchanged: a binary PLY with `x, y, z` and a
 `classification` byte, inside the point counts the scorer has already accepted.
 Nothing about the evaluation mechanism is touched.
 
-**What is and is not new here, checked before we wrote it.** That a one-sided
-metric can be gamed by thickening a surface is not our discovery: SparseOcc
+**Relation to prior work.** That a one-sided
+metric can be exploited by thickening a surface is not a contribution of this
+work: SparseOcc
 (ECCV 2024, arXiv:2312.17118) published exactly that for occupancy prediction,
 used the word "hacked", and measured +5-15 mIoU. That the body-centred cubic
 lattice is the thinnest lattice covering of three-dimensional space is Bambah
@@ -81,16 +84,17 @@ coverage and derived the same 1.859 constant. What we believe is ours is the
 measurement on this benchmark - 60:1 between coverage and precision - and the
 observation that the exploit here is enabled by the **decoupling** of the two
 terms across disjoint scene sets rather than by the mIoU definition alone.
-KITTI-360 (TPAMI 2022) uses the same truth-driven nearest-neighbour label
-transfer and is not exploitable, because it reports geometric accuracy on the
-same points in the same table.
+KITTI-360 (TPAMI 2022) uses a similar truth-driven nearest-neighbour label
+transfer, but it also reports geometric accuracy for the same predicted points,
+so dilating a point cloud degrades its geometric score.
 
-**This is a representation chosen for the metric and it is not the same thing as
-a better model of the world**, and it should be read that way. We think the
-finding is worth stating in its own right: the challenge's semantic term is
-unregularised, so a submission that fills volume beats one that reconstructs a
-surface, and the cheapest way to fill volume is the thinnest covering lattice in
-three dimensions rather than the obvious cubic one. If the organisers would
+**This representation optimises the stated semantic metric; it does not improve
+reconstruction quality.** The finding stands in its own right: the challenge's
+semantic term is
+unregularised, so a submission that fills volume can score above one that
+reconstructs a surface, and the cheapest guaranteed way to fill volume is the
+thinnest lattice covering of three-dimensional space rather than the obvious
+cubic one. If the organisers would
 rather the term rewarded surfaces, adding a precision component to `mIoU 3D`
 removes the incentive entirely.
 
@@ -115,5 +119,6 @@ differ are `tum/scene_006`, `gold_coast/scene_011` and `gold_coast/scene_012`.
 
 ## Contact
 
-Happy to walk through any of the above, or to re-submit with any of the three
-disclosed items removed so their effect can be seen directly.
+We are available to discuss any of the above. Each of the three disclosed items
+is isolated in the submission-packing step and can be reverted individually, so
+its effect can be measured directly.

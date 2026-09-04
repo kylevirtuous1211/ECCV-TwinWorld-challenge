@@ -6,7 +6,7 @@ Team `kylechen1211`. Final phase, **1.53**, fourth of twenty-one.
     rendering 0.610   geometry 0.58   semantic 0.34
 
 Read from `api/phases/29458/get_leaderboard/` after the phase closed. The board
-prints two decimals, so nothing here is quoted to more.
+prints two decimals, which is why the leaderboard row is quoted to two.
 
 The archive is `submission_v0.30_bcc019.zip`, submitted 2026-08-31T09:56Z.
 
@@ -15,9 +15,59 @@ Sweeps, ablations, viewers, diagnostics and the measurement scripts behind each
 choice are in the full repository; what is here is the path from the released
 dataset to the archive.
 
+The full write-up is the challenge factsheet:
+**[twinworld_factsheet_kylechen1211.pdf](https://github.com/kylevirtuous1211/ECCV-TwinWorld-challenge/blob/main/factsheet/twinworld_factsheet_kylechen1211.pdf)**
+(9 pages, with the method, the ablations, the disclosed properties of the
+submission and a measurement of the semantic metric).
+
+![The pipeline](docs/pipeline.png)
+
+*One dense seed feeds three separately trained families of Gaussians. Gains in
+blue were measured on the six scenes that ship ground truth before the change
+was adopted.*
+
+## Results
+
+Rendering, on held-out views. Top row released reference, bottom row our
+submitted render, the mean of three seeds; the frame shown is each scene's
+median by PSNR.
+
+![Rendering against ground truth](docs/renders.png)
+
+The semantic term on `gold_coast/scene_009`, viewed from above: released labels,
+our labels transferred exactly as the metric transfers them, and the fraction of
+ground-truth points with any prediction within 10 cm. **63.7% of the truth has
+nothing of ours within 10 cm at all**, and every one of those points is an error
+the metric charges us, while a prediction with no truth near it is charged
+nothing.
+
+![Semantic labels and truth coverage](docs/semantic.png)
+
+That asymmetry is what the last two figures are about. Under a semantic score
+with no precision term the optimal submission is a covering problem rather than
+a surface, so for `scene_011` and `scene_012` we submit a labelled occupancy
+volume on a body-centred cubic lattice. Both clouds below hold almost the same
+number of points; they differ in whether those points lie on the surface or fill
+the neighbourhood around it.
+
+![Labelled surface against labelled volume](docs/volume.png)
+
+Across the sweep, the score follows the lattice's covering radius and is almost
+indifferent to shell thickness. The surface-dilation variants are a different
+construction and sit above the lattice trend at equal radius, so what the
+lattice buys is the guarantee rather than a better score at every budget.
+
+![Covering radius against pooled mIoU](docs/sweep.png)
+
+This is a representation chosen for the metric and it does not improve the
+reconstruction; `DISCLOSURE.md` states it, along with two other properties of
+the submission, and the factsheet measures the metric behaviour that makes it
+pay.
+
 ## What the method is, in one page
 
-Two things account for most of the score and neither is a new model.
+Three modifications account for most of the gain and none is a new model; two
+are described here, and the dense MVS seed of step 1 is the third.
 
 **1. A known upstream defect in gsplat's 2DGS depth, quantified.**
 2DGS represents a surface as oriented discs, so the depth a pixel should receive
@@ -27,8 +77,8 @@ smuggled through the rasteriser as an extra colour channel indexed by Gaussian
 id. A disc tilted 60 degrees spans 1.73 of its own **radius** in depth and is
 reported as a constant.
 
-**This is not our discovery and we do not claim it.** It has been open upstream
-since 2024-11-05: nerfstudio-project/gsplat
+**The defect itself is known upstream and is not a contribution of this work.** It
+has been open since 2024-11-05: nerfstudio-project/gsplat
 [#477](https://github.com/nerfstudio-project/gsplat/issues/477) and
 [#863](https://github.com/nerfstudio-project/gsplat/issues/863), with
 [PR #932](https://github.com/nerfstudio-project/gsplat/pull/932) *"fix(2dgs): use
@@ -41,11 +91,19 @@ CUDA-versus-torch tests cannot catch it. The distinction is named as a source of
 error in Gaussian Surfels (arXiv 2404.17774), RaDe-GS (2406.01467) and PGSR
 (2406.06521). Patched forks ship with GS-SDF (IROS 2025) and OMeGa (WACV 2026).
 
-**What is ours is the price.** On the four scenes that ship ground truth, in a
-paired A/B on one training run per scene, reading the depth correctly moves
-`geometry_score` from **0.3888 to 0.4717 (+0.0829)** with no retraining and no
-new data, and precision and recall at 5 cm both rise on every scene while the
-clouds get 7-11% *smaller*. We have not found that number published anywhere.
+What this work contributes is the price on this benchmark. On the four scenes
+that ship ground truth, in a paired A/B on one training run per scene, reading
+the depth correctly moves `geometry_score` from **0.3888 to 0.4717 (+0.0829)**
+with no retraining and no new data, precision and recall at 5 cm both rise, and
+the clouds get 7-11% *smaller*.
+
+That A/B predates the dense MVS seed. Repeated on a checkpoint that shipped,
+`tum/scene_000` seed 0, the gain is much smaller: F moves from **0.5949 to
+0.6114**, and 5 cm precision *falls*, 0.447 to 0.408, while 5 cm recall rises,
+0.437 to 0.510. That is one scene rather than four and the source of the
+difference has not been isolated, so `+0.083` is the number for the model family
+it was measured on rather than for the final one.
+
 `twinworld/raydepth.py` recovers the intersection from what the library already
 returns - `median_ids` plus the ray transforms in `meta` - rather than patching
 CUDA, so it works against an unmodified install.
@@ -61,7 +119,8 @@ The Gold Coast term is a truth-driven nearest-neighbour lookup inside 10 cm with
 costs exactly nothing. What maximises it is therefore a covering set. Filling a
 region is not the same as covering it - the worst-covered point of a filled
 region sits at the lattice's covering radius - and the body-centred cubic lattice
-is the thinnest covering in three dimensions, so it guarantees a 10 cm match for
+is the lowest-density *lattice* covering of three-dimensional space, so it
+guarantees a 10 cm match for
 349 points per cubic metre where the simple cubic lattice needs 649. Under a
 per-cloud point budget that is the whole trade: `twinworld/lattice.py` ships
 `bcc a=0.19` dilated by its eight nearest neighbours, which measured +0.042 of
@@ -72,14 +131,13 @@ rather than a filling, so 3 to 17% of it lies between 30 cm and a metre of our
 surface while the coarsening that would pay for that reach costs 40 to 70 points
 of covering.
 
-**This is stated plainly because it is a representation chosen for the metric.**
-The volume optimises the semantic term as written rather than improving the
-reconstruction, and it works because that term is unregularised. The format is
+**This representation optimises the stated semantic metric; it does not improve
+reconstruction quality.** It works because that term is unregularised. The format is
 unchanged - a binary PLY with a `classification` byte - no external data is
 involved and nothing touches the evaluation mechanism, but it should be read as
 a finding about the benchmark as much as about the method.
 
-## What does not reproduce, and why
+## Reproducibility
 
 Two steps upstream of everything else are not deterministic, and both matter to a
 verification.
@@ -145,7 +203,8 @@ Two variables below:
 
 ### 1. A dense MVS seed
 
-The released `sparse/0` reconstruction is a crop of a larger one. Rebuilding the
+The released `sparse/0` reconstruction appears to be cropped from a larger one.
+Rebuilding the
 seed densely, from the released images only, is worth +0.10 of `F-score` on the
 withheld scenes.
 
@@ -165,8 +224,10 @@ withheld scenes.
 ### 3. The five-seed agreement filter
 
 Keep only points that at least two of the other four seeds also placed within
-5 cm. Worth +0.032 of `geometry_score`, and it keeps about half the points, which
-is what lets the archive ship at the full 2 cm fusion voxel.
+5 cm. Worth +0.029 of `geometry_score` on the four TUM scenes that ship ground truth,
+0.4730 to 0.5016. It removes 49% of the points from the released-seed clouds it
+was tuned on and 28.5% from the dense-MVS clouds that shipped, which is what lets
+the archive stay at the full 2 cm fusion voxel.
 
     python scripts/veto_clouds.py \
         --clouds $WORK/geom_mvs/seed0 \
@@ -250,7 +311,8 @@ withheld scenes exactly as it applies to the released ones.
 ### 6. The frame offset, and the semantic labels
 
 The Gold Coast ground truth sits 1.1 to 1.4 m out of the camera frame its own
-images define. This measures it, with TUM as the control that reads zero.
+images define. This measures it, with the four TUM scenes that ship ground truth as the
+control, whose offsets range from 0.014 to 0.074 m.
 
     python scripts/frame_offset.py --dataset-root $ROOT \
         --output $WORK/frame_offset_xy.json
@@ -342,11 +404,11 @@ line, and the Gold Coast labels fall in {0,1,2,3,4}.
 
 `score_local.py` is our reimplementation of the three official metrics from their
 stated definitions, so this pipeline can be checked without spending a submission
-slot. It has matched the leaderboard on every development-phase upload we
-compared, to the precision the board prints. The pair below is the sharpest
-check available, because those two archives differ in nothing but a translation
-applied to the Gold Coast clouds, so a scorer that agreed on one by luck would
-have to be lucky twice in opposite directions:
+slot. It matched the leaderboard on every development-phase upload we
+compared, to the precision the board prints. The pair below is the strongest of
+those comparisons: the two archives differ only in a translation applied to the
+Gold Coast clouds, so the local scorer has to separate them in the same
+direction and by the same margin as the board:
 
     metric     board, v0.06_light_shifted    score_local.py      v0.06_light
     PSNR                          19.68            19.68              19.68
@@ -374,7 +436,7 @@ repository is a board row and never a local one.
 ## The two constants
 
 Everything above is a command. Two numbers in it are decisions, and both are
-stated here rather than buried.
+given here with their derivations.
 
 **The Gold Coast offset for `scene_011` and `scene_012`, (0.6925, -0.830).**
 Neither scene ships ground truth, so this cannot be fitted the way steps 6 fits
@@ -394,8 +456,9 @@ equation in one unknown - it says the previously shipped (0.45, -1.05) is at
 least 0.24 m from the truth. The derivations are `RESEARCH_LOG.md` T1 and T3 in
 the full repository, with `scripts/carry_truth.py` and `scripts/project_miou.py`.
 
-**The lattice, `bcc a=0.19` with a 0.17 m shell.** Chosen by a 29-variant sweep
-scored on the two released Gold Coast scenes at full density, with the point
+**The lattice, `bcc a=0.19` with a 0.17 m shell.** Chosen by a sweep of 29
+variants over three grids, scored on the two released Gold Coast scenes at full
+density, with the point
 budget on `scene_011` and `scene_012` priced at the same time; the selection
 criterion and the budget were fixed before the grid ran. `RESEARCH_LOG.md` T2,
 with `scripts/volume_sweep.py`. `a = 0.18` scores slightly better and does not
@@ -406,20 +469,19 @@ of the objective.
 
 The challenge terms provide for top-ranked teams to share code for verification,
 and the workshop page says the best five teams will be asked. `DISCLOSURE.md`
-states, up front, the three things in this pipeline a reviewer would otherwise
-have to find: released development-set ground truth is used to place the two Gold
+states three properties of this pipeline: released development-set ground truth
+is used to place the two Gold
 Coast test clouds, one of the three offset estimates is fitted to our own
 leaderboard rows, and the labelled volume optimises a semantic metric that has no
 precision term. No data from outside the release is used anywhere.
 
-## Honest notes
+## Further notes
 
 - `geometry_score` went **down** 0.01 between our last two submissions, from 0.59
   to 0.58, while `tum/scene_006` was being repaired. The repair was justified on
   a coverage diagnostic against the released sparse points and it did not pay on
   the board. We do not have the submission slots left to separate it from the
-  other two clouds that changed in the same archive, so it stands as an
-  unresolved negative.
+  other two clouds that changed in the same archive, so it remains unresolved.
 - The seven withheld scenes are the whole of the final-phase score, and nothing
   in this repository can score them. Every number quoted for a withheld scene is
   a leaderboard row.

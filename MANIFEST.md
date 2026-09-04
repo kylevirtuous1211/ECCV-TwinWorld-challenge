@@ -44,7 +44,7 @@ labelling, `build_gc_clouds.py --from-offset` must say `0.45 -1.05`, not the
 `0.6625 -1.07` that a plain `--unmeasured extrapolate` run would leave. Both
 routes end at the same absolute position; only the stated starting point differs.
 
-## Known gaps, stated rather than left to be discovered
+## Known gaps in the native representation
 
 - **The rendering models have no `checkpoint.pt` at all.** Those 39 runs were
   launched without `--save-checkpoint`. Every rendered image survives - all 117
@@ -52,8 +52,8 @@ routes end at the same absolute position; only the stated starting point differs
   byte-identical to the images in the submitted archive - along with each run's
   `receipt.json`, which carries the full configuration and that run's own
   PSNR/SSIM/LPIPS. `NATIVE_TO_SUBMISSION.md` gives the command that retrains
-  them; we have not substituted retrained weights for the originals, because they
-  would not be the originals.
+  them; we do not provide retrained weights as substitutes for the original
+  checkpoints.
 - **`native/tum_scene_006_minviews2/seed0` has no `checkpoint.pt`.** That run was
   launched without `--save-checkpoint`; its `point_cloud.ply` and `colour.npy`
   are present, and seeds 1-4 have checkpoints. The fused cloud that shipped is
